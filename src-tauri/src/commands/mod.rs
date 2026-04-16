@@ -12,6 +12,7 @@ use crate::core::cache_cleanup::{
 };
 use crate::core::cancel_token::CancelToken;
 use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
+use crate::core::content_hash::hash_dir;
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
 use crate::core::installer::{
@@ -544,6 +545,7 @@ pub async fn sync_skill_to_tool(
     tool: String,
     name: String,
     overwrite: Option<bool>,
+    overwriteIfSameContent: Option<bool>,
     scope: Option<String>,
     projectPath: Option<String>,
 ) -> Result<SyncResultDto, String> {
@@ -597,7 +599,9 @@ pub async fn sync_skill_to_tool(
                 });
             }
         }
-        let overwrite = overwrite.unwrap_or(false);
+        let overwrite = overwrite.unwrap_or(false)
+            || (overwriteIfSameContent.unwrap_or(false)
+                && target_has_same_content(sourcePath.as_ref(), &target));
         let result =
             sync_dir_for_tool_with_overwrite(&tool, sourcePath.as_ref(), &target, overwrite)
                 .map_err(|err| {
@@ -663,6 +667,16 @@ pub async fn sync_skill_to_tool(
     .await
     .map_err(|err| err.to_string())?
     .map_err(format_anyhow_error)
+}
+
+fn target_has_same_content(source: &std::path::Path, target: &std::path::Path) -> bool {
+    if !source.is_dir() || !target.is_dir() {
+        return false;
+    }
+    match (hash_dir(source), hash_dir(target)) {
+        (Ok(source_hash), Ok(target_hash)) => source_hash == target_hash,
+        _ => false,
+    }
 }
 
 #[tauri::command]

@@ -37,3 +37,42 @@
 - `src-tauri/src/core/tests/skill_store.rs`
 - `src/components/skills/SkillDetailView.tsx`
 - `src/App.css`
+
+---
+
+## 取消同步后的 Agent 重新启用入口
+
+**变更：** 修复在“我的 skills”页面取消部分 agent 同步后，已取消同步的 agent 没有重新启用入口的问题。
+
+**原因：** v0.4.3 中未同步 agent 只会在卡片展开状态下渲染。触发场景是：某个 skill 同步到多个 agent 后，用户取消 Qoder、GitHub Copilot 等部分 agent；如果该 skill 剩余已同步 agent 数量不超过 5 个，卡片不会显示 `+N more` 展开按钮，导致被取消同步的 agent 无法以灰色按钮显示，看起来像“消失了，无法重新添加”。关闭重开应用也不会恢复，因为这是渲染条件问题，不是临时状态卡住。
+
+**实现方式：**
+- 当卡片不需要折叠时，直接显示未同步 agent 的灰色按钮。
+- 保留折叠场景下通过 `+N more` 展开查看完整 agent 列表的行为。
+
+**涉及文件：** `src/components/skills/SkillCard.tsx`
+
+---
+
+## Bug：导入同名且内容一致的 Skill 时同步冲突
+
+**关联 Issue：** https://github.com/qufei1993/skills-hub/issues/51
+
+**状态：** 已在本地验证修复，待 v0.5.0 发版后关闭 issue。
+
+**变更：** 修复从一个工具导入 Skill 后，同名且内容一致的其它工具目录仍被判定为同步冲突的问题；同时修复导入弹窗在部分同步失败后不关闭、未选择任何 Skill 时仍可点击“导入并同步”的问题。
+
+**原因：** 旧同步逻辑只判断目标目录是否存在。即使 Codex、Cursor 等工具下的同名 Skill 内容完全一致，也会返回 `TARGET_EXISTS`，导致该工具永远无法被 Hub 接管。导入流程还会在部分失败时只显示错误 toast，不关闭 `ImportModal`。
+
+**实现方式：**
+- `sync_skill_to_tool` 增加 `overwriteIfSameContent` 参数。
+- 后端在目标目录已存在时比较 Hub 中央仓库 Skill 与目标目录的内容 hash；内容一致时允许安全接管，内容不一致时继续阻止覆盖。
+- 所有前端同步入口都传入 `overwriteIfSameContent: true`，确保导入、创建后同步、单个工具同步、批量同步和范围切换行为一致。
+- 导入流程改为逐项处理，单个 Skill 导入或同步失败不会中断后续项。
+- 导入结束后统一关闭弹窗；有错误时只显示错误提示，全部成功时才显示成功提示。
+- 未选择任何 Skill 时禁用“导入并同步”，并在提交入口增加空选择校验。
+
+**涉及文件：**
+- `src-tauri/src/commands/mod.rs`
+- `src/App.tsx`
+- `src/components/skills/modals/ImportModal.tsx`

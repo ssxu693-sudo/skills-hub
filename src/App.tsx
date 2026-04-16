@@ -980,27 +980,47 @@ function App() {
 
   const handleImport = async () => {
     if (!plan) return
+    if (!plan.groups.some((group) => selected[group.name])) {
+      setError(t('errors.selectAtLeastOneSkill'))
+      return
+    }
     setLoading(true)
     setLoadingStartAt(Date.now())
     setActionMessage(null)
     setError(null)
     try {
       const collectedErrors: { title: string; message: string }[] = []
+      let successCount = 0
       for (const group of plan.groups) {
         if (!selected[group.name]) continue
         const chosenPath = variantChoice[group.name] ?? group.variants[0]?.path
         if (!chosenPath) continue
-        const chosenVariantTool =
-          group.variants.find((v) => v.path === chosenPath)?.tool ?? null
+        const chosenVariant = group.variants.find((v) => v.path === chosenPath)
+        const chosenVariantTool = chosenVariant?.tool ?? null
+        const chosenFingerprint = chosenVariant?.fingerprint ?? null
 
-        setActionMessage(t('actions.importExisting', { name: group.name }))
-        const installResult = await invokeTauri<{
+        let installResult: {
           skill_id: string
           central_path: string
-        }>('import_existing_skill', {
-          sourcePath: chosenPath,
-          name: group.name,
-        })
+        }
+
+        try {
+          setActionMessage(t('actions.importExisting', { name: group.name }))
+          installResult = await invokeTauri<{
+            skill_id: string
+            central_path: string
+          }>('import_existing_skill', {
+            sourcePath: chosenPath,
+            name: group.name,
+          })
+          successCount += 1
+        } catch (err) {
+          collectedErrors.push({
+            title: t('errors.importFailedTitle', { name: group.name }),
+            message: err instanceof Error ? err.message : String(err),
+          })
+          continue
+        }
 
         const selectedInstalledIds = tools
           .filter((tool) => syncTargets[tool.id] && isInstalled(tool.id))
@@ -1013,20 +1033,28 @@ function App() {
             t('actions.syncing', { name: group.name, tool: tool.label }),
           )
           try {
+            const sharedToolIds = sharedToolIdsByToolId[tool.id] ?? [tool.id]
+            const hasSameContentVariant = Boolean(
+              chosenFingerprint &&
+                group.variants.some(
+                  (variant) =>
+                    sharedToolIds.includes(variant.tool) &&
+                    variant.fingerprint === chosenFingerprint,
+                ),
+            )
             const overwrite = Boolean(
-              chosenVariantTool &&
-                (chosenVariantTool === tool.id ||
-                  (sharedToolIdsByToolId[chosenVariantTool] ?? []).includes(
-                    tool.id,
-                  )),
+              (chosenVariantTool &&
+                (chosenVariantTool === tool.id || sharedToolIds.includes(chosenVariantTool))) ||
+                hasSameContentVariant,
             )
             await invokeTauri('sync_skill_to_tool', {
               sourcePath: installResult.central_path,
               skillId: installResult.skill_id,
               tool: tool.id,
               name: group.name,
-              // 自动接管：如果来源就是该工具目录，同步回该工具时需要替换成指向中心仓库的软链
+              // 自动接管：来源目录或内容一致的已发现目录可安全替换为 Hub 管理的同步目标。
               overwrite,
+              overwriteIfSameContent: true,
             })
           } catch (err) {
             const raw = err instanceof Error ? err.message : String(err)
@@ -1055,15 +1083,15 @@ function App() {
       }
 
       setActionMessage(t('status.importCompleted'))
-      setSuccessToastMessage(t('status.importCompleted'))
       setActionMessage(null)
       await loadManagedSkills()
       await loadPlan()
       if (collectedErrors.length > 0) {
         showActionErrors(collectedErrors)
-      } else {
-        setShowImportModal(false)
+      } else if (successCount > 0) {
+        setSuccessToastMessage(t('status.importCompleted'))
       }
+      setShowImportModal(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1131,6 +1159,7 @@ function App() {
                   skillId: created.skill_id,
                   tool: tool.id,
                   name: created.name,
+                  overwriteIfSameContent: true,
                 })
               } catch (err) {
                 const raw = err instanceof Error ? err.message : String(err)
@@ -1245,6 +1274,7 @@ function App() {
                   skillId: created.skill_id,
                   tool: tool.id,
                   name: created.name,
+                  overwriteIfSameContent: true,
                 })
               } catch (err) {
                 const raw = err instanceof Error ? err.message : String(err)
@@ -1308,6 +1338,7 @@ function App() {
                     skillId: created.skill_id,
                     tool: tool.id,
                     name: created.name,
+                    overwriteIfSameContent: true,
                   })
                 } catch (err) {
                   const raw = err instanceof Error ? err.message : String(err)
@@ -1376,6 +1407,7 @@ function App() {
                       skillId: created.skill_id,
                       tool: tool.id,
                       name: created.name,
+                      overwriteIfSameContent: true,
                     })
                   } catch (err) {
                     const raw = err instanceof Error ? err.message : String(err)
@@ -1550,6 +1582,7 @@ function App() {
                     skillId: created.skill_id,
                     tool: tool.id,
                     name: created.name,
+                    overwriteIfSameContent: true,
                   })
                 } catch (err) {
                   const raw = err instanceof Error ? err.message : String(err)
@@ -1659,6 +1692,7 @@ function App() {
                     skillId: created.skill_id,
                     tool: tool.id,
                     name: created.name,
+                    overwriteIfSameContent: true,
                   })
                 } catch (err) {
                   const raw = err instanceof Error ? err.message : String(err)
@@ -1768,6 +1802,7 @@ function App() {
                   skillId: skill.id,
                   tool: toolId,
                   name: skill.name,
+                  overwriteIfSameContent: true,
                   scope: 'project',
                   projectPath,
                 })
@@ -1778,6 +1813,7 @@ function App() {
                 skillId: skill.id,
                 tool: toolId,
                 name: skill.name,
+                overwriteIfSameContent: true,
                 scope: 'global',
               })
             }
@@ -1906,6 +1942,7 @@ function App() {
                 skillId: skill.id,
                 tool: toolId,
                 name: skill.name,
+                overwriteIfSameContent: true,
                 scope: 'project',
                 projectPath,
               })
@@ -1919,6 +1956,7 @@ function App() {
                   skillId: skill.id,
                   tool: toolId,
                   name: skill.name,
+                  overwriteIfSameContent: true,
                   scope: 'global',
                 })
             } catch (err) {
@@ -2042,6 +2080,7 @@ function App() {
                 skillId: skill.id,
                 tool: toolId,
                 name: skill.name,
+                overwriteIfSameContent: true,
                 scope: 'project',
                 projectPath,
               })
@@ -2052,6 +2091,7 @@ function App() {
               skillId: skill.id,
               tool: toolId,
               name: skill.name,
+              overwriteIfSameContent: true,
               scope: 'global',
             })
           }
