@@ -23,6 +23,7 @@ type SkillsListProps = {
   onToggleTool: (skill: ManagedSkill, toolId: string) => void
   onOpenScope: (skill: ManagedSkill) => void
   onOpenDetail: (skill: ManagedSkill) => void
+  onEditTags: (skill: ManagedSkill) => void
   getSkillScope: (skill: ManagedSkill) => 'global' | 'project'
   getSkillProjects: (skill: ManagedSkill) => string[]
   t: TFunction
@@ -42,6 +43,7 @@ const SkillsList = ({
   onToggleTool,
   onOpenScope,
   onOpenDetail,
+  onEditTags,
   getSkillScope,
   getSkillProjects,
   t,
@@ -90,6 +92,7 @@ const SkillsList = ({
               onToggleTool={onToggleTool}
               onOpenScope={onOpenScope}
               onOpenDetail={onOpenDetail}
+              onEditTags={onEditTags}
               getSkillScope={getSkillScope}
               getSkillProjects={getSkillProjects}
               t={t}

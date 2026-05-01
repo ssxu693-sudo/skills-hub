@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -62,6 +62,22 @@ CREATE TABLE IF NOT EXISTS discovered_skills (
 
 CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 CREATE INDEX IF NOT EXISTS idx_skills_updated_at ON skills(updated_at);
+
+CREATE TABLE IF NOT EXISTS skill_tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_tag_links (
+  skill_id TEXT NOT NULL,
+  tag_id INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (skill_id, tag_id),
+  FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+  FOREIGN KEY(tag_id) REFERENCES skill_tags(id) ON DELETE CASCADE
+);
 "#;
 
 #[derive(Clone, Debug)]
@@ -101,6 +117,20 @@ pub struct SkillTargetRecord {
     pub synced_at: Option<i64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagRecord {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagWithCountRecord {
+    pub id: i64,
+    pub name: String,
+    pub skill_count: i64,
+    pub updated_at: i64,
+}
+
 impl SkillStore {
     pub fn new(db_path: PathBuf) -> Self {
         Self { db_path }
@@ -134,6 +164,9 @@ impl SkillStore {
                 }
                 if user_version < 4 {
                     migrate_skill_targets_to_v4(conn)?;
+                }
+                if user_version < 5 {
+                    migrate_tags_to_v5(conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -343,6 +376,151 @@ impl SkillStore {
         })
     }
 
+    pub fn create_tag(&self, name: &str) -> Result<TagRecord> {
+        let normalized = normalize_tag_name(name)?;
+        self.with_conn(|conn| {
+            let now = now_ms();
+            conn.execute(
+                "INSERT INTO skill_tags (name, created_at, updated_at) VALUES (?1, ?2, ?2)",
+                params![normalized, now],
+            )
+            .with_context(|| format!("tag already exists: {}", normalized))?;
+            let id = conn.last_insert_rowid();
+            Ok(TagRecord {
+                id,
+                name: normalized,
+            })
+        })
+    }
+
+    pub fn rename_tag(&self, tag_id: i64, name: &str) -> Result<TagRecord> {
+        let normalized = normalize_tag_name(name)?;
+        self.with_conn(|conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE skill_tags SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![normalized, now_ms(), tag_id],
+                )
+                .with_context(|| format!("tag already exists: {}", normalized))?;
+            if changed == 0 {
+                anyhow::bail!("tag not found: {}", tag_id);
+            }
+            Ok(TagRecord {
+                id: tag_id,
+                name: normalized,
+            })
+        })
+    }
+
+    pub fn delete_tag(&self, tag_id: i64) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM skill_tags WHERE id = ?1", params![tag_id])?;
+            Ok(())
+        })
+    }
+
+    pub fn list_tags_with_counts(&self) -> Result<Vec<TagWithCountRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT t.id, t.name, COUNT(l.skill_id) AS skill_count,
+                        COALESCE(MAX(l.created_at), t.updated_at) AS last_used_at
+                 FROM skill_tags t
+                 LEFT JOIN skill_tag_links l ON l.tag_id = t.id
+                 GROUP BY t.id, t.name, t.updated_at
+                 ORDER BY LOWER(t.name) ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(TagWithCountRecord {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    skill_count: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            })?;
+
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn get_skill_tags(&self, skill_id: &str) -> Result<Vec<TagRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT t.id, t.name
+                 FROM skill_tags t
+                 INNER JOIN skill_tag_links l ON l.tag_id = t.id
+                 WHERE l.skill_id = ?1
+                 ORDER BY LOWER(t.name) ASC",
+            )?;
+            let rows = stmt.query_map(params![skill_id], |row| {
+                Ok(TagRecord {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                })
+            })?;
+
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn set_skill_tags(&self, skill_id: &str, tag_ids: &[i64]) -> Result<()> {
+        self.with_conn(|conn| {
+            let now = now_ms();
+            conn.execute_batch("BEGIN;")?;
+            let result = (|| -> Result<()> {
+                conn.execute(
+                    "DELETE FROM skill_tag_links WHERE skill_id = ?1",
+                    params![skill_id],
+                )?;
+                for tag_id in tag_ids {
+                    conn.execute(
+                        "INSERT OR IGNORE INTO skill_tag_links (skill_id, tag_id, created_at)
+                         VALUES (?1, ?2, ?3)",
+                        params![skill_id, tag_id, now],
+                    )?;
+                }
+                Ok(())
+            })();
+
+            match result {
+                Ok(()) => {
+                    conn.execute_batch("COMMIT;")?;
+                    Ok(())
+                }
+                Err(err) => {
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    Err(err)
+                }
+            }
+        })
+    }
+
+    pub fn list_untagged_skill_ids(&self) -> Result<Vec<String>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT s.id
+                 FROM skills s
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM skill_tag_links l WHERE l.skill_id = s.id
+                 )
+                 ORDER BY s.updated_at DESC",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
     pub fn list_skill_targets(&self, skill_id: &str) -> Result<Vec<SkillTargetRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
@@ -484,6 +662,42 @@ fn migrate_skill_targets_to_v4(conn: &Connection) -> Result<()> {
          COMMIT;",
     )?;
     Ok(())
+}
+
+fn migrate_tags_to_v5(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS skill_tags (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+           created_at INTEGER NOT NULL,
+           updated_at INTEGER NOT NULL
+         );
+
+         CREATE TABLE IF NOT EXISTS skill_tag_links (
+           skill_id TEXT NOT NULL,
+           tag_id INTEGER NOT NULL,
+           created_at INTEGER NOT NULL,
+           PRIMARY KEY (skill_id, tag_id),
+           FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+           FOREIGN KEY(tag_id) REFERENCES skill_tags(id) ON DELETE CASCADE
+         );",
+    )?;
+    Ok(())
+}
+
+fn normalize_tag_name(name: &str) -> Result<String> {
+    let normalized = name.trim().to_string();
+    if normalized.is_empty() {
+        anyhow::bail!("tag name cannot be empty");
+    }
+    Ok(normalized)
+}
+
+fn now_ms() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    now.as_millis() as i64
 }
 
 pub fn default_db_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf> {

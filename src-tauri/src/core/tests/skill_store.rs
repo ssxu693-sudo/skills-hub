@@ -377,6 +377,62 @@ fn deleting_skill_cascades_targets() {
 }
 
 #[test]
+fn tags_can_be_created_renamed_linked_and_deleted() {
+    let (_dir, store) = make_store();
+    let skill = make_skill("s1", "S1", "/central/s1", 1);
+    store.upsert_skill(&skill).unwrap();
+
+    let frontend = store.create_tag(" Frontend ").unwrap();
+    assert_eq!(frontend.name, "Frontend");
+    assert!(store.create_tag("frontend").is_err());
+
+    let docs = store.create_tag("Docs").unwrap();
+    store.set_skill_tags("s1", &[frontend.id, docs.id]).unwrap();
+    store
+        .set_skill_tags("s1", &[frontend.id, frontend.id, docs.id])
+        .unwrap();
+
+    let linked = store.get_skill_tags("s1").unwrap();
+    assert_eq!(linked.len(), 2);
+    assert_eq!(linked[0].name, "Docs");
+    assert_eq!(linked[1].name, "Frontend");
+
+    let renamed = store.rename_tag(frontend.id, "UI").unwrap();
+    assert_eq!(renamed.name, "UI");
+    assert!(store.rename_tag(renamed.id, "docs").is_err());
+
+    let tags = store.list_tags_with_counts().unwrap();
+    assert_eq!(tags.len(), 2);
+    assert_eq!(tags[0].name, "Docs");
+    assert_eq!(tags[0].skill_count, 1);
+    assert_eq!(tags[1].name, "UI");
+    assert_eq!(tags[1].skill_count, 1);
+
+    store.delete_tag(docs.id).unwrap();
+    let linked = store.get_skill_tags("s1").unwrap();
+    assert_eq!(linked.len(), 1);
+    assert_eq!(linked[0].name, "UI");
+}
+
+#[test]
+fn tag_links_are_removed_when_skill_is_deleted_and_untagged_is_counted() {
+    let (_dir, store) = make_store();
+    let tagged = make_skill("tagged", "Tagged", "/central/tagged", 2);
+    let untagged = make_skill("untagged", "Untagged", "/central/untagged", 1);
+    store.upsert_skill(&tagged).unwrap();
+    store.upsert_skill(&untagged).unwrap();
+
+    let tag = store.create_tag("Frontend").unwrap();
+    store.set_skill_tags("tagged", &[tag.id]).unwrap();
+
+    assert_eq!(store.list_untagged_skill_ids().unwrap(), vec!["untagged"]);
+
+    store.delete_skill("tagged").unwrap();
+    assert!(store.get_skill_tags("tagged").unwrap().is_empty());
+    assert_eq!(store.list_tags_with_counts().unwrap()[0].skill_count, 0);
+}
+
+#[test]
 fn description_stored_and_retrieved() {
     let (_dir, store) = make_store();
     let mut skill = make_skill("d1", "D1", "/central/d1", 1);

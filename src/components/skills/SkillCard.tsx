@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { Box, Copy, Folder, Github, RefreshCw, Trash2 } from 'lucide-react'
+import { Box, Copy, Folder, Github, RefreshCw, Tag, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { TFunction } from 'i18next'
 import type { ManagedSkill, ToolOption } from './types'
@@ -21,6 +21,7 @@ type SkillCardProps = {
   onToggleTool: (skill: ManagedSkill, toolId: string) => void
   onOpenScope: (skill: ManagedSkill) => void
   onOpenDetail: (skill: ManagedSkill) => void
+  onEditTags: (skill: ManagedSkill) => void
   getSkillScope: (skill: ManagedSkill) => 'global' | 'project'
   getSkillProjects: (skill: ManagedSkill) => string[]
   t: TFunction
@@ -40,6 +41,7 @@ const SkillCard = ({
   onToggleTool,
   onOpenScope,
   onOpenDetail,
+  onEditTags,
   getSkillScope,
   getSkillProjects,
   t,
@@ -99,6 +101,29 @@ const SkillCard = ({
           >
             {skill.name}
           </button>
+          {skill.tags.length > 0 ? (
+            <div className="skill-tags-inline">
+              {skill.tags.slice(0, 3).map((tag) => (
+                <button
+                  key={tag.id}
+                  className="skill-tag-pill"
+                  type="button"
+                  onClick={() => onEditTags(skill)}
+                >
+                  #{tag.name}
+                </button>
+              ))}
+              {skill.tags.length > 3 ? (
+                <button
+                  className="skill-tag-pill muted"
+                  type="button"
+                  onClick={() => onEditTags(skill)}
+                >
+                  +{skill.tags.length - 3}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         {skill.description ? (
           <div className="skill-desc">{skill.description}</div>
@@ -194,6 +219,16 @@ const SkillCard = ({
         </div>
       </div>
       <div className="skill-actions-col">
+        <button
+          className={`card-btn tag-action${skill.tags.length > 0 ? ' has-tags' : ''}`}
+          type="button"
+          onClick={() => onEditTags(skill)}
+          disabled={loading}
+          aria-label={t('editTags')}
+          title={t('editTags')}
+        >
+          <Tag size={16} />
+        </button>
         <button
           className="card-btn primary-action"
           type="button"

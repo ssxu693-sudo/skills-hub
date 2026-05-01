@@ -160,9 +160,13 @@ fn get_managed_skills_impl_maps_targets() {
         synced_at: None,
     };
     store.upsert_skill_target(&target).unwrap();
+    let tag = store.create_tag("Frontend").unwrap();
+    store.set_skill_tags("s1", &[tag.id]).unwrap();
 
     let out = get_managed_skills_impl(&store).unwrap();
     assert_eq!(out.len(), 1);
+    assert_eq!(out[0].tags.len(), 1);
+    assert_eq!(out[0].tags[0].name, "Frontend");
     assert_eq!(out[0].targets.len(), 1);
     assert_eq!(out[0].targets[0].tool, "cursor");
     assert_eq!(out[0].targets[0].scope, "global");

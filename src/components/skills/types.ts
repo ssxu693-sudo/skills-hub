@@ -25,6 +25,16 @@ export type ToolOption = {
   supports_project_scope?: boolean
 }
 
+export type TagDto = {
+  id: number
+  name: string
+}
+
+export type TagWithCountDto = TagDto & {
+  skill_count: number
+  updated_at: number
+}
+
 export type ManagedSkill = {
   id: string
   name: string
@@ -36,6 +46,7 @@ export type ManagedSkill = {
   updated_at: number
   last_sync_at?: number | null
   status: string
+  tags: TagDto[]
   targets: {
     tool: string
     scope: 'global' | 'project' | string

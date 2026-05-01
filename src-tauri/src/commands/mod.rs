@@ -870,7 +870,22 @@ pub struct ManagedSkillDto {
     pub updated_at: i64,
     pub last_sync_at: Option<i64>,
     pub status: String,
+    pub tags: Vec<TagDto>,
     pub targets: Vec<SkillTargetDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TagDto {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TagWithCountDto {
+    pub id: i64,
+    pub name: String,
+    pub skill_count: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -887,6 +902,93 @@ pub struct SkillTargetDto {
 #[tauri::command]
 pub fn get_managed_skills(store: State<'_, SkillStore>) -> Result<Vec<ManagedSkillDto>, String> {
     get_managed_skills_impl(store.inner())
+}
+
+#[tauri::command]
+pub fn get_tags(store: State<'_, SkillStore>) -> Result<Vec<TagWithCountDto>, String> {
+    store
+        .list_tags_with_counts()
+        .map(|tags| {
+            tags.into_iter()
+                .map(|tag| TagWithCountDto {
+                    id: tag.id,
+                    name: tag.name,
+                    skill_count: tag.skill_count,
+                    updated_at: tag.updated_at,
+                })
+                .collect()
+        })
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn create_tag(store: State<'_, SkillStore>, name: String) -> Result<TagDto, String> {
+    store
+        .create_tag(&name)
+        .map(|tag| TagDto {
+            id: tag.id,
+            name: tag.name,
+        })
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn rename_tag(
+    store: State<'_, SkillStore>,
+    tagId: i64,
+    name: String,
+) -> Result<TagDto, String> {
+    store
+        .rename_tag(tagId, &name)
+        .map(|tag| TagDto {
+            id: tag.id,
+            name: tag.name,
+        })
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn delete_tag(store: State<'_, SkillStore>, tagId: i64) -> Result<(), String> {
+    store.delete_tag(tagId).map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn get_skill_tags(
+    store: State<'_, SkillStore>,
+    skillId: String,
+) -> Result<Vec<TagDto>, String> {
+    store
+        .get_skill_tags(&skillId)
+        .map(|tags| {
+            tags.into_iter()
+                .map(|tag| TagDto {
+                    id: tag.id,
+                    name: tag.name,
+                })
+                .collect()
+        })
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn set_skill_tags(
+    store: State<'_, SkillStore>,
+    skillId: String,
+    tagIds: Vec<i64>,
+) -> Result<(), String> {
+    store
+        .set_skill_tags(&skillId, &tagIds)
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub fn get_untagged_skill_ids(store: State<'_, SkillStore>) -> Result<Vec<String>, String> {
+    store.list_untagged_skill_ids().map_err(format_anyhow_error)
 }
 
 #[tauri::command]
@@ -993,6 +1095,15 @@ fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, S
                     synced_at: target.synced_at,
                 })
                 .collect();
+            let tags = store
+                .get_skill_tags(&skill.id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tag| TagDto {
+                    id: tag.id,
+                    name: tag.name,
+                })
+                .collect();
 
             ManagedSkillDto {
                 id: skill.id,
@@ -1005,6 +1116,7 @@ fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, S
                 updated_at: skill.updated_at,
                 last_sync_at: skill.last_sync_at,
                 status: skill.status,
+                tags,
                 targets,
             }
         })
