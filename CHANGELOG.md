@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-16
+
+### Fixed
+- **Window close behavior**: Closing the main window now exits the app instead of hiding it in the background, fixing cases where the app kept running but could not be reopened from the Dock or taskbar ([PR #68](https://github.com/qufei1993/skills-hub/pull/68)).
+
 ## [0.6.0] - 2026-05-05
 
 ### Added
